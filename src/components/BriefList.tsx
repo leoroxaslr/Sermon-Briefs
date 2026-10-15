@@ -4,7 +4,6 @@ import { useMemo, useState } from "react";
 import Link from "next/link";
 import { Library, Search } from "lucide-react";
 import { formatSermonDate, timeAgo } from "@/lib/format";
-import { NEW_WORDING_TARGET } from "@/lib/grounding";
 import type { BriefSummary } from "@/lib/types";
 import { EngineBadge, SourceIcon, StatusBadge } from "./badges";
 
@@ -80,14 +79,6 @@ export function BriefList({ briefs }: { briefs: BriefSummary[] }) {
                       <SourceIcon key={kind} kind={kind} className="size-3.5" />
                     ))}
                   </span>
-                  {brief.newWording !== null && (
-                    <span
-                      className={brief.newWording <= NEW_WORDING_TARGET ? "text-success" : "text-warning"}
-                      title="Share of new wording (not from the sermon)"
-                    >
-                      {Math.round(brief.newWording * 100)}% new
-                    </span>
-                  )}
                   <EngineBadge engine={brief.engineUsed} />
                   <time dateTime={brief.createdAt} className="w-20 text-right tabular-nums" suppressHydrationWarning>
                     {timeAgo(brief.createdAt)}

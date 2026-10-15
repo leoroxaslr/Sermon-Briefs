@@ -72,17 +72,6 @@ const SCRIPTURE = new RegExp(
   "gi",
 );
 
-/** The first Bible reference in reading order: usually the sermon's main text. */
-export function firstScripture(text: string): string | null {
-  for (const match of text.matchAll(SCRIPTURE)) {
-    const book = BOOK_LOOKUP.get(match[1].toLowerCase().replace(/\s+/g, ""));
-    if (!book || !match[3]) continue;
-    const [, , chapter, verse, end] = match;
-    return `${book === "Psalms" ? "Psalm" : book} ${chapter}:${verse}${end ? `-${end}` : ""}`;
-  }
-  return null;
-}
-
 export function findScriptures(text: string): string[] {
   const counts = new Map<string, { ref: string; count: number; first: number }>();
   for (const match of text.matchAll(SCRIPTURE)) {

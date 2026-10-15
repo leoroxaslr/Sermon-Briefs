@@ -1,7 +1,7 @@
 {
   "name": "sermon-brief-desktop",
   "productName": "Sermon Brief",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Turn sermon slides, PDFs and transcripts into printable one-page briefs.",
   "author": "Sermon Brief",
   "private": true,

@@ -2,7 +2,6 @@ import "server-only";
 import { config } from "../config";
 import { tavilySettings } from "../settings";
 import { BriefContentSchema, type BriefContent, type BriefOptions } from "../types";
-import type { DetectedOutline } from "./outline";
 import { AUDIENCE_GUIDANCE, type BriefMeta } from "./shared";
 
 /** An error whose message is safe and useful to show in the UI. */
@@ -82,30 +81,22 @@ function buildOutputSchema(options: BriefOptions) {
     date: str("The date the sermon was preached if stated, otherwise an empty string."),
     series: str("The sermon series name if stated, otherwise an empty string."),
     scriptures: list(
-      "The Bible passages the sermon is built on. The main text (usually given at the very start) comes first. At most 5.",
+      "The main Bible passages the sermon is built on, most important first. At most 5.",
       "A Bible reference such as 'Joshua 1:6-9'.",
     ),
-    bigIdea: str(
-      "The sermon's main point, copied word for word from the file: the sentence that defines or states the theme of the whole message (usually near the start, often highlighted). At most 35 words.",
-    ),
-    summary: str(
-      "2-3 sentences copied word for word from the file that summarize the WHOLE message, preferably from its conclusion. At most 70 words.",
-    ),
+    bigIdea: str("The single main point of the sermon in one memorable sentence of at most 25 words."),
+    summary: str("A 2-3 sentence summary of the message, at most 70 words."),
   };
   if (s.outline) {
     properties.outline = {
       type: "array",
-      description:
-        "The sermon's own main points, in order, exactly as the file numbers them. Do not add points the file does not have; a conclusion is not a main point.",
+      description: "The sermon's main movements in order. 3 to 5 sections.",
       items: {
         type: "object",
-        description: "One main point of the sermon.",
+        description: "One section of the sermon.",
         properties: {
-          heading: str("The main point's heading, copied word for word from the file."),
-          points: list(
-            "The sub-points under this heading as the file states them (for example its lettered sub-headings), or 1 to 3 key sentences from this part. Copied word for word.",
-            "One sub-point copied word for word from the file, at most 25 words.",
-          ),
+          heading: str("A short heading for this section, at most 8 words."),
+          points: list("1 to 3 supporting points for this section.", "One supporting point, at most 20 words."),
         },
         required: ["heading", "points"],
       },
@@ -113,36 +104,29 @@ function buildOutputSchema(options: BriefOptions) {
   }
   if (s.quotes) {
     properties.keyQuotes = list(
-      "2 to 3 memorable lines the preacher wrote (not Bible verses), copied exactly.",
-      "One exact quote, at most 35 words, without surrounding quotation marks.",
+      "2 to 3 memorable lines from the sermon, quoted as closely to the original wording as possible.",
+      "One quote, at most 30 words, without surrounding quotation marks.",
     );
   }
   if (s.takeaways) {
-    properties.takeaways = list(
-      "3 to 4 practical takeaways copied word for word from the file, preferring its own lists of practices or applications.",
-      "One takeaway copied from the file, at most 25 words.",
-    );
+    properties.takeaways = list("3 to 4 practical takeaways.", "One takeaway, at most 22 words.");
   }
   if (s.reflection) {
     properties.reflectionQuestions = list(
-      "3 short reflection questions. Each one quotes a line from the sermon and adds at most 6 words of your own, for example: Where do you see \"<quoted line>\" in your life this week?",
-      "One question: a quoted line from the sermon plus at most 6 new words.",
+      "3 to 4 open-ended reflection or discussion questions drawn from this sermon.",
+      "One question, at most 25 words.",
     );
   }
   if (s.application) {
-    properties.application = str(
-      "The sermon's closing challenge or call to action (usually in its conclusion), copied word for word. Must not repeat the big idea or a key quote. At most 40 words.",
-    );
+    properties.application = str("One concrete challenge or action step for the coming week, at most 40 words.");
   }
   if (s.prayer) {
-    properties.prayer = str(
-      "A short closing prayer built from the sermon's own phrases, at most 60 words.",
-    );
+    properties.prayer = str("A short closing prayer that responds to the message, at most 60 words.");
   }
   return { properties, required: Object.keys(properties) };
 }
 
-function buildInput(options: BriefOptions, meta: BriefMeta, outline: DetectedOutline | null): string {
+function buildInput(options: BriefOptions, meta: BriefMeta): string {
   const known = [
     meta.title && `Title: ${meta.title}`,
     meta.speaker && `Speaker: ${meta.speaker}`,
@@ -151,17 +135,11 @@ function buildInput(options: BriefOptions, meta: BriefMeta, outline: DetectedOut
   ].filter(Boolean);
   return [
     "Create a one-page sermon brief from the attached sermon material (slides, notes, and/or transcript).",
-    "This brief must be EXTRACTIVE: copy the preacher's own words. At least 90% of the words you return must appear word for word in the attached file.",
-    "Prefer whole sentences and phrases from the file over paraphrase. Do not summarize in your own words, add ideas, or interpret beyond the text.",
-    "Use each line from the file in only one field; do not repeat the same line in two fields.",
-    "Use outside sources only to confirm Bible references.",
+    "Base every part of the brief on what the preacher actually said in the attached file.",
+    "Use outside sources only to confirm Bible references; do not add ideas the sermon does not contain.",
+    "Keep the preacher's voice and wording where you can. Write in plain, warm language.",
     "Refer to the preacher by name or as 'the pastor'; never guess their pronouns or gender.",
-    "Lines under '[Text in images]' were recovered by OCR; fix obvious recognition errors but otherwise keep the wording.",
-    outline
-      ? `The sermon's outline, to use exactly as the outline field: ${outline
-          .map((o, i) => `${i + 1}. ${o.heading}${o.points.length ? ` (${o.points.join("; ")})` : ""}`)
-          .join(" ")}`
-      : "",
+    "Lines under '[Text in images]' were recovered by OCR and may contain small recognition errors.",
     `Audience: ${AUDIENCE_GUIDANCE[options.audience]}`,
     known.length ? `Known details (use these exactly): ${known.join("; ")}.` : "",
   ]
@@ -210,7 +188,6 @@ export async function generateWithTavily(
   sourceText: string,
   options: BriefOptions,
   meta: BriefMeta,
-  outline: DetectedOutline | null,
   onProgress: (message: string) => void,
 ): Promise<{ content: BriefContent; credits: number | null; warnings: string[] }> {
   const warnings: string[] = [];
@@ -223,7 +200,7 @@ export async function generateWithTavily(
   const created = await tavilyFetch("/research", {
     method: "POST",
     body: JSON.stringify({
-      input: buildInput(options, meta, outline),
+      input: buildInput(options, meta),
       model: tavilySettings().model,
       output_schema: buildOutputSchema(options),
       output_length: "short",

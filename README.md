@@ -5,10 +5,9 @@ Turn sermon slides, PDFs and transcripts into printable one-page briefs: the big
 - **Reads almost anything:** PowerPoint (`.pptx`, including speaker notes), PDF, Word (`.docx`), slide images, and transcripts (`.txt`, `.md`, `.srt`, `.vtt`, or pasted text).
 - **Reads text inside images:** slide pictures are scanned with on-device OCR (tesseract.js). This is free and runs on your machine.
 - **Two writing engines:**
-  - **Tavily AI** (recommended) uses Tavily Research with your Tavily credits. With the `mini` model, a brief has cost 10–70 credits in testing; longer sermons cost more.
+  - **Tavily AI** (recommended) uses Tavily Research with your Tavily credits. With the `mini` model, a brief has cost about 10–30 credits in testing; longer sermons cost more.
   - **Local** is free and offline. It picks the strongest lines from your material and never invents content.
   - If Tavily fails or isn't set up, the app falls back to Local automatically and tells you so.
-- **Stays in the preacher's words:** briefs are built from the sermon's own sentences. The app uses the sermon's numbered outline (I., II., A., B.) word for word and the sermon's own conclusion as the summary. Paraphrased lines are pulled back to the sentences they came from. Each brief shows its **% new wording** (target: under 10%), and **Highlight new wording** marks every word that isn't in the source.
 - **Dashboard:** every brief is saved, searchable, editable, and can be regenerated with different sections or audiences.
 - **Prints on one page:** the brief shrinks its type slightly to fit US Letter. Use **Print / Save PDF**.
 - **No login:** it's meant to run on your own computer or a private network.

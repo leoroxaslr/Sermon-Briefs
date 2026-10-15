@@ -1,12 +1,9 @@
 import "server-only";
 import { generateLocally } from "./ai/local";
-import { firstScripture } from "./ai/local";
-import { applyOutline, detectConclusion, detectOutline } from "./ai/outline";
 import { generateWithTavily } from "./ai/tavily";
 import { config } from "./config";
 import { getBrief, updateBrief } from "./db";
 import { extractAll, type UploadedFile } from "./extract";
-import { buildSourceIndex, measure, snapToSource } from "./grounding";
 import { tavilyConfigured } from "./settings";
 import type { BriefContent, BriefOptions, Engine } from "./types";
 
@@ -64,7 +61,6 @@ async function generate(id: string): Promise<void> {
   const brief = getBrief(id)!;
   const { options, extractedText, meta } = brief;
   const notices: string[] = [];
-  const outline = detectOutline(extractedText);
   updateBrief(id, { status: "generating", progress: "Writing your brief…", notices });
 
   let content: BriefContent | null = null;
@@ -76,7 +72,7 @@ async function generate(id: string): Promise<void> {
       notices.push("Tavily isn't connected, so the free local engine was used instead.");
     } else {
       try {
-        const result = await generateWithTavily(extractedText, options, meta, outline, (progress) =>
+        const result = await generateWithTavily(extractedText, options, meta, (progress) =>
           updateBrief(id, { progress }),
         );
         content = result.content;
@@ -106,21 +102,6 @@ async function generate(id: string): Promise<void> {
     series: meta.series || content.series,
   };
 
-  // Keep the brief in the preacher's own words: the sermon's real outline, and
-  // paraphrased lines pulled back to the sentences they came from.
-  if (options.sections.outline && outline) content = { ...content, outline: applyOutline(content.outline, outline) };
-  const conclusion = detectConclusion(extractedText);
-  if (conclusion) content = { ...content, summary: conclusion };
-  const mainText = firstScripture(extractedText);
-  if (mainText) {
-    const key = (ref: string) => ref.replace(/[\s–—-]+/g, "").toLowerCase();
-    const rest = content.scriptures.filter((ref) => key(ref) !== key(mainText));
-    content = { ...content, scriptures: [mainText, ...rest].slice(0, 5) };
-  }
-  const index = buildSourceIndex(extractedText);
-  content = snapToSource(content, index);
-  const grounding = measure(content, options, index);
-
   updateBrief(id, {
     status: "ready",
     progress: "",
@@ -130,7 +111,6 @@ async function generate(id: string): Promise<void> {
     // Credits accumulate across regenerations so the dashboard total stays honest.
     credits: credits === null ? brief.credits : (brief.credits ?? 0) + credits,
     notices,
-    grounding,
     title: content.title,
     speaker: content.speaker,
     sermonDate: content.date,

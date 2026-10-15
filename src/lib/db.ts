@@ -3,7 +3,6 @@ import fs from "node:fs";
 import { randomUUID } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
 import { config } from "./config";
-import type { Grounding } from "./grounding";
 import {
   BriefContentSchema,
   BriefOptionsSchema,
@@ -46,6 +45,8 @@ const MIGRATIONS = [
    );
    CREATE INDEX IF NOT EXISTS briefs_created_at ON briefs(created_at DESC);`,
   `ALTER TABLE briefs ADD COLUMN grounding TEXT;`,
+  // The "% new wording" measure was removed; drop its column.
+  `ALTER TABLE briefs DROP COLUMN grounding;`,
 ];
 
 function open(): DatabaseSync {
@@ -110,7 +111,6 @@ function toRecord(row: Row): BriefRecord {
     content: content ? BriefContentSchema.parse(content) : null,
     warnings: parseJson<string[]>(row.warnings, []),
     notices: parseJson<string[]>(row.notices, []),
-    grounding: parseJson<Grounding | null>(row.grounding, null),
     credits: (row.credits as number | null) ?? null,
     createdAt: String(row.created_at),
     updatedAt: String(row.updated_at),
@@ -160,8 +160,7 @@ export function listBriefs(): BriefSummary[] {
   const rows = db()
     .prepare(
       `SELECT id, title, speaker, sermon_date, series, status, engine_used, sources, credits,
-              created_at, json_extract(content, '$.bigIdea') AS big_idea,
-              json_extract(grounding, '$.newWording') AS new_wording
+              created_at, json_extract(content, '$.bigIdea') AS big_idea
        FROM briefs ORDER BY created_at DESC`,
     )
     .all() as Row[];
@@ -177,7 +176,6 @@ export function listBriefs(): BriefSummary[] {
     credits: (row.credits as number | null) ?? null,
     createdAt: String(row.created_at),
     bigIdea: String(row.big_idea ?? ""),
-    newWording: (row.new_wording as number | null) ?? null,
   }));
 }
 
@@ -193,7 +191,6 @@ export type BriefUpdate = Partial<{
   content: BriefContent;
   warnings: string[];
   notices: string[];
-  grounding: Grounding | null;
   credits: number | null;
   title: string;
   speaker: string;
@@ -213,7 +210,6 @@ const COLUMN: Record<keyof BriefUpdate, string> = {
   content: "content",
   warnings: "warnings",
   notices: "notices",
-  grounding: "grounding",
   credits: "credits",
   title: "title",
   speaker: "speaker",
@@ -221,7 +217,7 @@ const COLUMN: Record<keyof BriefUpdate, string> = {
   series: "series",
 };
 
-const JSON_FIELDS = new Set<keyof BriefUpdate>(["options", "meta", "stats", "content", "warnings", "notices", "grounding"]);
+const JSON_FIELDS = new Set<keyof BriefUpdate>(["options", "meta", "stats", "content", "warnings", "notices"]);
 
 export function updateBrief(id: string, update: BriefUpdate): void {
   const keys = Object.keys(update) as (keyof BriefUpdate)[];

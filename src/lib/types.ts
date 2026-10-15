@@ -1,5 +1,4 @@
 import { z } from "zod";
-import type { Grounding } from "./grounding";
 
 /** Shared between server and client. No server-only imports here. */
 
@@ -121,8 +120,6 @@ export type BriefRecord = {
   warnings: string[];
   /** Notes about how the current brief was written (replaced on each regeneration). */
   notices: string[];
-  /** How much of the brief is new wording vs. the sermon's own (see lib/grounding). */
-  grounding: Grounding | null;
   credits: number | null;
   createdAt: string;
   updatedAt: string;
@@ -141,7 +138,7 @@ export type BriefSummary = Pick<
   | "sources"
   | "credits"
   | "createdAt"
-> & { bigIdea: string; newWording: number | null };
+> & { bigIdea: string };
 
 export const BriefPatchSchema = z.object({
   content: BriefContentSchema.optional(),

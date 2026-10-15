@@ -120,18 +120,4 @@ body {
   .paper-break-avoid {
     break-inside: avoid;
   }
-  .paper mark {
-    background: none !important;
-    color: inherit !important;
-    text-decoration: none !important;
-  }
-}
-
-/* "Highlight new wording": words not found in the sermon. Never printed. */
-.paper mark {
-  background: #fff1a8;
-  color: inherit;
-  text-decoration: underline 1.5px #d4a300;
-  text-underline-offset: 2px;
-  border-radius: 2px;
 }

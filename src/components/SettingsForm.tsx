@@ -111,7 +111,7 @@ export function SettingsForm({ initial }: { initial: View }) {
           <legend className="sr-only">Model</legend>
           {(
             [
-              ["mini", "Mini (recommended)", "About 10–70 credits per brief"],
+              ["mini", "Mini (recommended)", "About 10–30 credits per brief"],
               ["pro", "Pro", "15–250 credits per brief; deeper but slower"],
             ] as const
           ).map(([value, title, desc]) => (

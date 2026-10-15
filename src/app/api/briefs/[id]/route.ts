@@ -1,5 +1,4 @@
 import { deleteBrief, getBrief, updateBrief } from "@/lib/db";
-import { buildSourceIndex, measure } from "@/lib/grounding";
 import { BriefContentSchema } from "@/lib/types";
 
 const notFound = () => Response.json({ error: "That brief doesn't exist." }, { status: 404 });
@@ -36,7 +35,6 @@ export async function PATCH(request: Request, ctx: RouteContext<"/api/briefs/[id
     content,
     // Saved edits count as the user's own details, so regenerating keeps them.
     meta: { title: content.title, speaker: content.speaker, sermonDate: content.date, series: content.series },
-    grounding: measure(content, brief.options, buildSourceIndex(brief.extractedText)),
     title: content.title,
     speaker: content.speaker,
     sermonDate: content.date,

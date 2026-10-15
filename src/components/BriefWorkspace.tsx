@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
@@ -8,7 +8,6 @@ import {
   Check,
   CircleAlert,
   Copy,
-  Highlighter,
   Info,
   LoaderCircle,
   Pencil,
@@ -20,8 +19,7 @@ import {
 } from "lucide-react";
 import type { ClientBrief } from "@/lib/data";
 import { formatBytes, pluralize } from "@/lib/format";
-import { buildSourceIndex, NEW_WORDING_TARGET, SECTION_ORDER, segment, type Grounding } from "@/lib/grounding";
-import { SECTION_LABELS, type BriefContent } from "@/lib/types";
+import type { BriefContent } from "@/lib/types";
 import { EngineBadge, isProcessing, SourceIcon, StatusBadge } from "./badges";
 import { BriefEditor } from "./BriefEditor";
 import { BriefPaper } from "./BriefPaper";
@@ -38,12 +36,11 @@ export function BriefWorkspace({ initial, tavilyReady }: { initial: ClientBrief;
   const [showSource, setShowSource] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
-  const [highlight, setHighlight] = useState(false);
   const [sourceText, setSourceText] = useState<string | null>(null);
   const [sourceFailed, setSourceFailed] = useState(false);
   const processing = isProcessing(brief.status);
 
-  // The extracted text is fetched once, on demand, for the source panel and the highlighter.
+  // The extracted text can be large, so it's fetched once, when the source panel first opens.
   const loadSource = useCallback(() => {
     if (sourceText !== null) return;
     fetch(`/api/briefs/${brief.id}/source`, { cache: "no-store" })
@@ -52,12 +49,6 @@ export function BriefWorkspace({ initial, tavilyReady }: { initial: ClientBrief;
       .catch(() => setSourceFailed(true));
   }, [brief.id, sourceText]);
 
-  const index = useMemo(() => (sourceText ? buildSourceIndex(sourceText) : null), [sourceText]);
-  const mark = useMemo(() => {
-    if (!highlight || !index) return undefined;
-    return (text: string) =>
-      segment(text, index).map((s, i) => (s.isNew ? <mark key={i}>{s.text}</mark> : s.text));
-  }, [highlight, index]);
 
   // Poll while the server is working on this brief.
   useEffect(() => {
@@ -139,7 +130,6 @@ export function BriefWorkspace({ initial, tavilyReady }: { initial: ClientBrief;
             <h1 className="truncate text-xl font-semibold tracking-tight">{brief.title || "New brief"}</h1>
             <StatusBadge status={brief.status} />
             <EngineBadge engine={brief.engineUsed} />
-            {brief.status === "ready" && brief.grounding && <WordingChip grounding={brief.grounding} />}
             {brief.credits ? (
               <span className="text-xs text-muted">{pluralize(brief.credits, "credit")}</span>
             ) : null}
@@ -150,16 +140,6 @@ export function BriefWorkspace({ initial, tavilyReady }: { initial: ClientBrief;
           <div className="flex flex-wrap gap-2">
             <ToolbarButton onClick={() => window.print()} primary icon={<Printer className="size-4" aria-hidden />}>
               Print / Save PDF
-            </ToolbarButton>
-            <ToolbarButton
-              onClick={() => {
-                loadSource();
-                setHighlight((v) => !v);
-              }}
-              pressed={highlight}
-              icon={<Highlighter className="size-4" aria-hidden />}
-            >
-              Highlight new wording
             </ToolbarButton>
             <ToolbarButton onClick={() => setEditing(true)} icon={<Pencil className="size-4" aria-hidden />}>
               Edit
@@ -226,14 +206,9 @@ export function BriefWorkspace({ initial, tavilyReady }: { initial: ClientBrief;
             <BriefEditor initial={brief.content} options={brief.options} onSave={save} onCancel={() => setEditing(false)} />
           ) : (
             // The page is a fixed 8.5in wide; let it scroll sideways on small screens.
-            <>
-              {highlight && (
-                <HighlightLegend grounding={brief.grounding} loading={!index && !sourceFailed} failed={sourceFailed} />
-              )}
-              <div className="-mx-4 overflow-x-auto px-4 pb-6 print:m-0 print:overflow-visible print:p-0">
-                <BriefPaper content={brief.content} options={brief.options} mark={mark} />
-              </div>
-            </>
+            <div className="-mx-4 overflow-x-auto px-4 pb-6 print:m-0 print:overflow-visible print:p-0">
+              <BriefPaper content={brief.content} options={brief.options} />
+            </div>
           )}
         </>
       )}
@@ -383,21 +358,17 @@ function ToolbarButton(props: {
   label?: string;
   primary?: boolean;
   danger?: boolean;
-  pressed?: boolean;
 }) {
   const style = props.primary
     ? "bg-accent text-accent-fg hover:bg-accent-hover border-transparent"
     : props.danger
       ? "border-border-strong text-danger hover:bg-danger-soft"
-      : props.pressed
-        ? "border-accent bg-accent-soft text-accent"
-        : "border-border-strong hover:bg-surface-2";
+      : "border-border-strong hover:bg-surface-2";
   return (
     <button
       type="button"
       onClick={props.onClick}
       aria-label={props.label}
-      aria-pressed={props.pressed}
       title={props.label}
       className={`inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-sm font-medium transition ${style}`}
     >
@@ -438,45 +409,3 @@ function Notice({
   );
 }
 
-const pct = (n: number) => `${Math.round(n * 100)}%`;
-const SECTION_NAMES: Record<(typeof SECTION_ORDER)[number], string> = { core: "Big idea & summary", ...SECTION_LABELS };
-
-function WordingChip({ grounding }: { grounding: Grounding }) {
-  const ok = grounding.newWording <= NEW_WORDING_TARGET;
-  return (
-    <span
-      className={`rounded-full px-2 py-0.5 text-xs font-medium ${ok ? "bg-success-soft text-success" : "bg-warning-soft text-warning"}`}
-      title="Share of the brief's words that don't appear in the sermon material. Target: under 10%."
-    >
-      {pct(grounding.newWording)} new wording
-    </span>
-  );
-}
-
-function HighlightLegend({
-  grounding,
-  loading,
-  failed,
-}: {
-  grounding: Grounding | null;
-  loading: boolean;
-  failed: boolean;
-}) {
-  return (
-    <div className="mx-auto mb-4 max-w-[8.5in] rounded-lg border border-border bg-surface px-3 py-2.5 text-sm print:hidden">
-      <p>
-        <mark className="rounded-sm bg-[#fff1a8] px-1 text-[#1b1a17] underline decoration-[#d4a300]">Highlighted</mark>{" "}
-        words don&apos;t appear in the sermon material. Everything else is the preacher&apos;s own wording.
-        {loading && <span className="text-muted"> Loading…</span>}
-        {failed && <span className="text-danger"> Couldn&apos;t load the source text.</span>}
-      </p>
-      {grounding && (
-        <p className="mt-1 text-xs text-muted">
-          {SECTION_ORDER.filter((k) => grounding.bySection[k] !== undefined)
-            .map((k) => `${SECTION_NAMES[k]} ${pct(grounding.bySection[k]!)}`)
-            .join(" · ")}
-        </p>
-      )}
-    </div>
-  );
-}
