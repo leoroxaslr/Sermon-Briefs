@@ -1,0 +1,296 @@
+import "server-only";
+import { config } from "../config";
+import { tavilySettings } from "../settings";
+import { BriefContentSchema, type BriefContent, type BriefOptions } from "../types";
+import type { DetectedOutline } from "./outline";
+import { AUDIENCE_GUIDANCE, type BriefMeta } from "./shared";
+
+/** An error whose message is safe and useful to show in the UI. */
+export class TavilyError extends Error {
+  constructor(
+    message: string,
+    readonly status?: number,
+  ) {
+    super(message);
+    this.name = "TavilyError";
+  }
+}
+
+const STATUS_MESSAGES: Record<number, string> = {
+  400: "Tavily rejected the request.",
+  401: "Tavily rejected the API key. Check it in Settings.",
+  429: "Tavily is rate-limiting requests right now. Try again in a minute.",
+  432: "Your Tavily plan's credit limit has been reached.",
+  433: "Your Tavily pay-as-you-go limit has been reached.",
+};
+
+async function tavilyFetch(path: string, init: RequestInit = {}, apiKey = tavilySettings().apiKey): Promise<Response> {
+  if (!apiKey) throw new TavilyError("Tavily isn't connected. Add your API key in Settings.");
+  let res: Response;
+  try {
+    res = await fetch(`${config.tavily.baseUrl}${path}`, {
+      ...init,
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        "Content-Type": "application/json",
+        ...init.headers,
+      },
+      signal: init.signal ?? AbortSignal.timeout(60_000),
+      cache: "no-store",
+    });
+  } catch {
+    throw new TavilyError("Couldn't reach Tavily. Check your internet connection.");
+  }
+  if (!res.ok && res.status !== 202) {
+    let detail = "";
+    try {
+      const body = (await res.json()) as { detail?: { error?: string } | string };
+      detail = typeof body.detail === "string" ? body.detail : (body.detail?.error ?? "");
+    } catch {
+      // body wasn't JSON
+    }
+    const base = STATUS_MESSAGES[res.status] ?? `Tavily returned an error (HTTP ${res.status}).`;
+    throw new TavilyError(detail && res.status === 400 ? `${base} ${detail}` : base, res.status);
+  }
+  return res;
+}
+
+// ---------------------------------------------------------------------------
+// Output schema: only request the sections the user turned on, to save credits.
+// ---------------------------------------------------------------------------
+
+type SchemaProp = {
+  type: "string" | "array" | "object" | "integer" | "number";
+  description: string;
+  items?: SchemaProp;
+  properties?: Record<string, SchemaProp>;
+  required?: string[];
+};
+
+const str = (description: string): SchemaProp => ({ type: "string", description });
+const list = (description: string, item: string): SchemaProp => ({
+  type: "array",
+  description,
+  items: str(item),
+});
+
+function buildOutputSchema(options: BriefOptions) {
+  const s = options.sections;
+  const properties: Record<string, SchemaProp> = {
+    title: str("The sermon's title, taken from the material. If none is given, write a short fitting title."),
+    speaker: str("The preacher's name if the material states it, otherwise an empty string."),
+    date: str("The date the sermon was preached if stated, otherwise an empty string."),
+    series: str("The sermon series name if stated, otherwise an empty string."),
+    scriptures: list(
+      "The Bible passages the sermon is built on. The main text (usually given at the very start) comes first. At most 5.",
+      "A Bible reference such as 'Joshua 1:6-9'.",
+    ),
+    bigIdea: str(
+      "The sermon's main point, copied word for word from the file: the sentence that defines or states the theme of the whole message (usually near the start, often highlighted). At most 35 words.",
+    ),
+    summary: str(
+      "2-3 sentences copied word for word from the file that summarize the WHOLE message, preferably from its conclusion. At most 70 words.",
+    ),
+  };
+  if (s.outline) {
+    properties.outline = {
+      type: "array",
+      description:
+        "The sermon's own main points, in order, exactly as the file numbers them. Do not add points the file does not have; a conclusion is not a main point.",
+      items: {
+        type: "object",
+        description: "One main point of the sermon.",
+        properties: {
+          heading: str("The main point's heading, copied word for word from the file."),
+          points: list(
+            "The sub-points under this heading as the file states them (for example its lettered sub-headings), or 1 to 3 key sentences from this part. Copied word for word.",
+            "One sub-point copied word for word from the file, at most 25 words.",
+          ),
+        },
+        required: ["heading", "points"],
+      },
+    };
+  }
+  if (s.quotes) {
+    properties.keyQuotes = list(
+      "2 to 3 memorable lines the preacher wrote (not Bible verses), copied exactly.",
+      "One exact quote, at most 35 words, without surrounding quotation marks.",
+    );
+  }
+  if (s.takeaways) {
+    properties.takeaways = list(
+      "3 to 4 practical takeaways copied word for word from the file, preferring its own lists of practices or applications.",
+      "One takeaway copied from the file, at most 25 words.",
+    );
+  }
+  if (s.reflection) {
+    properties.reflectionQuestions = list(
+      "3 short reflection questions. Each one quotes a line from the sermon and adds at most 6 words of your own, for example: Where do you see \"<quoted line>\" in your life this week?",
+      "One question: a quoted line from the sermon plus at most 6 new words.",
+    );
+  }
+  if (s.application) {
+    properties.application = str(
+      "The sermon's closing challenge or call to action (usually in its conclusion), copied word for word. Must not repeat the big idea or a key quote. At most 40 words.",
+    );
+  }
+  if (s.prayer) {
+    properties.prayer = str(
+      "A short closing prayer built from the sermon's own phrases, at most 60 words.",
+    );
+  }
+  return { properties, required: Object.keys(properties) };
+}
+
+function buildInput(options: BriefOptions, meta: BriefMeta, outline: DetectedOutline | null): string {
+  const known = [
+    meta.title && `Title: ${meta.title}`,
+    meta.speaker && `Speaker: ${meta.speaker}`,
+    meta.sermonDate && `Date: ${meta.sermonDate}`,
+    meta.series && `Series: ${meta.series}`,
+  ].filter(Boolean);
+  return [
+    "Create a one-page sermon brief from the attached sermon material (slides, notes, and/or transcript).",
+    "This brief must be EXTRACTIVE: copy the preacher's own words. At least 90% of the words you return must appear word for word in the attached file.",
+    "Prefer whole sentences and phrases from the file over paraphrase. Do not summarize in your own words, add ideas, or interpret beyond the text.",
+    "Use each line from the file in only one field; do not repeat the same line in two fields.",
+    "Use outside sources only to confirm Bible references.",
+    "Refer to the preacher by name or as 'the pastor'; never guess their pronouns or gender.",
+    "Lines under '[Text in images]' were recovered by OCR; fix obvious recognition errors but otherwise keep the wording.",
+    outline
+      ? `The sermon's outline, to use exactly as the outline field: ${outline
+          .map((o, i) => `${i + 1}. ${o.heading}${o.points.length ? ` (${o.points.join("; ")})` : ""}`)
+          .join(" ")}`
+      : "",
+    `Audience: ${AUDIENCE_GUIDANCE[options.audience]}`,
+    known.length ? `Known details (use these exactly): ${known.join("; ")}.` : "",
+  ]
+    .filter(Boolean)
+    .join("\n");
+}
+
+/** Trim to Tavily's per-file word limit, keeping whole lines. */
+function fitToWordLimit(text: string, maxWords: number): { text: string; truncated: boolean } {
+  let count = 0;
+  const kept: string[] = [];
+  for (const line of text.split("\n")) {
+    count += line.split(/\s+/).filter(Boolean).length;
+    if (count > maxWords) return { text: kept.join("\n"), truncated: true };
+    kept.push(line);
+  }
+  return { text, truncated: false };
+}
+
+type ResearchStatus = {
+  request_id: string;
+  status: "pending" | "in_progress" | "completed" | "failed";
+  content?: unknown;
+  usage?: { credits?: number };
+  error?: string;
+};
+
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+/** Replace exotic spaces and hyphens (e.g. U+202F in "Joshua 1:9") that some fonts render badly. */
+function normalizeWhitespace(value: unknown): unknown {
+  if (typeof value === "string") {
+    return value
+      .replace(/[\u00A0\u2000-\u200B\u202F\u205F\u3000]/g, " ")
+      .replace(/[\u2010\u2011]/g, "-") // non-breaking hyphens, e.g. "1:2‑3"
+      .trim();
+  }
+  if (Array.isArray(value)) return value.map(normalizeWhitespace);
+  if (value && typeof value === "object") {
+    return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, normalizeWhitespace(v)]));
+  }
+  return value;
+}
+
+export async function generateWithTavily(
+  sourceText: string,
+  options: BriefOptions,
+  meta: BriefMeta,
+  outline: DetectedOutline | null,
+  onProgress: (message: string) => void,
+): Promise<{ content: BriefContent; credits: number | null; warnings: string[] }> {
+  const warnings: string[] = [];
+  const fitted = fitToWordLimit(sourceText, config.tavily.maxWords);
+  if (fitted.truncated) {
+    warnings.push("The material was longer than Tavily accepts, so only the first part was used.");
+  }
+
+  onProgress("Sending to Tavily Research…");
+  const created = await tavilyFetch("/research", {
+    method: "POST",
+    body: JSON.stringify({
+      input: buildInput(options, meta, outline),
+      model: tavilySettings().model,
+      output_schema: buildOutputSchema(options),
+      output_length: "short",
+      // Soft preference: when Tavily checks a verse, favour well-known Bible sites.
+      include_domains: ["biblegateway.com", "bible.com", "esv.org", "biblehub.com"],
+      files: [
+        {
+          name: "sermon.md",
+          type: "base64",
+          data: Buffer.from(fitted.text, "utf8").toString("base64"),
+        },
+      ],
+    }),
+  });
+  const { request_id: requestId } = (await created.json()) as { request_id: string };
+  if (!requestId) throw new TavilyError("Tavily didn't return a task id.");
+
+  const started = Date.now();
+  while (Date.now() - started < config.tavily.timeoutMs) {
+    await sleep(config.tavily.pollIntervalMs);
+    const seconds = Math.round((Date.now() - started) / 1000);
+    onProgress(`Tavily is writing your brief… (${seconds}s)`);
+
+    const res = await tavilyFetch(`/research/${encodeURIComponent(requestId)}?include_usage=true`);
+    const task = (await res.json()) as ResearchStatus;
+    if (task.status === "failed") {
+      throw new TavilyError(`Tavily couldn't finish the brief${task.error ? `: ${task.error}` : "."}`);
+    }
+    if (task.status !== "completed") continue;
+
+    let content = task.content;
+    if (typeof content === "string") {
+      try {
+        content = JSON.parse(content);
+      } catch {
+        throw new TavilyError("Tavily returned text instead of a structured brief.");
+      }
+    }
+    const parsed = BriefContentSchema.safeParse(normalizeWhitespace(content));
+    if (!parsed.success) throw new TavilyError("Tavily's response didn't match the brief format.");
+    return { content: parsed.data, credits: task.usage?.credits ?? null, warnings };
+  }
+  throw new TavilyError("Tavily took too long to respond. Try again, or use the free local engine.");
+}
+
+export type TavilyUsage = {
+  plan: string;
+  planUsage: number;
+  planLimit: number | null;
+  keyUsage: number;
+  keyLimit: number | null;
+  researchUsage: number;
+};
+
+/** Plan usage for the saved key, or for `apiKey` when testing one before saving it. */
+export async function getTavilyUsage(apiKey?: string): Promise<TavilyUsage> {
+  const res = await tavilyFetch("/usage", { signal: AbortSignal.timeout(8_000) }, apiKey);
+  const body = (await res.json()) as {
+    key?: { usage?: number; limit?: number | null; research_usage?: number };
+    account?: { current_plan?: string; plan_usage?: number; plan_limit?: number | null };
+  };
+  return {
+    plan: body.account?.current_plan ?? "Tavily",
+    planUsage: body.account?.plan_usage ?? 0,
+    planLimit: body.account?.plan_limit ?? null,
+    keyUsage: body.key?.usage ?? 0,
+    keyLimit: body.key?.limit ?? null,
+    researchUsage: body.key?.research_usage ?? 0,
+  };
+}

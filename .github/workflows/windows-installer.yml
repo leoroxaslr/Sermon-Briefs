@@ -1,0 +1,98 @@
+# Builds "Sermon-Brief-Setup-<version>.exe" on Windows.
+#   - Run it by hand: Actions tab → "Windows installer" → Run workflow. The .exe is attached
+#     to the run as an artifact.
+#   - Push a version tag (e.g. v0.2.0) to also publish it as a GitHub Release.
+name: Windows installer
+
+on:
+  workflow_dispatch:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write # to create the release on tag pushes
+
+concurrency:
+  group: windows-installer-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    env:
+      NEXT_TELEMETRY_DISABLED: 1
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          # This exact Node.js is bundled into the app (see desktop/scripts/prepare.mjs).
+          node-version: 24.14.1
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Type-check and lint
+        run: |
+          npx tsc --noEmit -p .
+          npx eslint .
+
+      - name: Build installer
+        run: npm run desktop:build:win
+
+      - name: Smoke-test the bundled server
+        shell: pwsh
+        run: |
+          $data = Join-Path $env:RUNNER_TEMP "sb-data"
+          # Seed the bundled OCR model, as the app does on first launch.
+          New-Item -ItemType Directory -Force -Path (Join-Path $data "tessdata") | Out-Null
+          Copy-Item "desktop/vendor/bundle/tessdata/eng.traineddata" (Join-Path $data "tessdata")
+          $env:SERMON_BRIEF_DATA_DIR = $data
+          $env:PORT = "3999"
+          $env:HOSTNAME = "127.0.0.1"
+          $server = Start-Process -FilePath "desktop/vendor/bundle/node/node.exe" `
+            -ArgumentList "desktop/vendor/bundle/server/server.js" -PassThru -NoNewWindow
+          try {
+            $ok = $false
+            for ($i = 0; $i -lt 60 -and -not $ok; $i++) {
+              Start-Sleep -Seconds 1
+              try { $ok = (Invoke-WebRequest -Uri "http://127.0.0.1:3999/" -UseBasicParsing).StatusCode -eq 200 } catch {}
+            }
+            if (-not $ok) { throw "Bundled server did not start" }
+            Write-Host "Bundled server answered on Windows."
+
+            # A deck and a PDF with words inside pictures: exercises OCR and PDF page rendering.
+            $created = Invoke-RestMethod -Method Post -Uri "http://127.0.0.1:3999/api/briefs" -Form @{
+              files   = @((Get-Item "desktop/test/sample-sermon.pptx"), (Get-Item "desktop/test/sample-slides.pdf"))
+              options = '{"engine":"local"}'
+            }
+            for ($i = 0; $i -lt 180; $i++) {
+              Start-Sleep -Seconds 1
+              $brief = Invoke-RestMethod -Uri "http://127.0.0.1:3999/api/briefs/$($created.id)"
+              if ($brief.status -in @("ready", "failed")) { break }
+            }
+            $brief.stats | Format-List | Out-String | Write-Host
+            if ($brief.status -ne "ready") { throw "Brief did not finish: $($brief.status) $($brief.error)" }
+            if ($brief.stats.imagesScanned -lt 3) { throw "OCR scanned too few images" }
+            if ($brief.warnings.Count -gt 0) { throw "Extraction warnings: $($brief.warnings -join '; ')" }
+            Write-Host "OCR and PDF rendering work on Windows."
+          } finally {
+            Stop-Process -Id $server.Id -Force
+          }
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Sermon-Brief-Windows
+          path: dist-desktop/*.exe
+          if-no-files-found: error
+
+      - name: Publish release
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" dist-desktop/*.exe \
+            --title "Sermon Brief $GITHUB_REF_NAME" --generate-notes

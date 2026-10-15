@@ -1,0 +1,40 @@
+# Desktop app packaging. See desktop/scripts/prepare.mjs for what goes into the bundle.
+appId: app.sermonbrief.desktop
+productName: Sermon Brief
+electronVersion: 44.5.1
+copyright: Sermon Brief
+
+directories:
+  app: desktop/app # Electron shell only; the web app ships as extraResources
+  buildResources: desktop/resources
+  output: dist-desktop
+
+asar: true
+beforeBuild: desktop/scripts/before-build.cjs
+
+# server/, node/ and tessdata/, assembled by desktop/scripts/prepare.mjs.
+extraResources:
+  - from: desktop/vendor/bundle
+    to: .
+    filter: ["**/*"]
+
+win:
+  target:
+    - target: nsis
+      arch: [x64]
+  icon: desktop/resources/icon.ico
+  artifactName: Sermon-Brief-Setup-${version}.${ext}
+
+nsis:
+  oneClick: true # no admin rights needed; installs for the current user
+  perMachine: false
+  createDesktopShortcut: always
+  createStartMenuShortcut: true
+  shortcutName: Sermon Brief
+  deleteAppDataOnUninstall: false # keep the user's briefs if they reinstall
+
+# Used only to test the package locally on a Mac (`npm run desktop:build:local`).
+mac:
+  target: dir
+  icon: desktop/resources/icon.png
+  identity: null
